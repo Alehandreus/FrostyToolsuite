@@ -1,3 +1,21 @@
+# This is a fork of [CadeEvs/FrostyToolsuite](https://github.com/CadeEvs/FrostyToolsuite)
+
+# New
+One can now export all meshes and textures from certain map with LevelEditor plugin.
+Since I am not very familiar with C# and Windows applications development, I simply inserted required code to **export all assets automatically when a LevelData file is opened**.
+Export path is controlled by *export_path* variable in *Editors/LevelEditor.cs* (*C:* by default). 
+
+Export creates two json files: *instances.json* and *materials.json*. These contain information about textures a certain material uses, materials that should be applied to a certain 3D model, etc.
+
+To build the project I recommend [these](https://docs.google.com/document/d/1fVFt37MRPsl22kQrO5cX-N59mt-FcVoFCfNp0FcSLmE/edit#heading=h.esmoanldb5rz) notes (taken from Frosty Toolsuite Discord server).
+
+## Unreal Engine
+A python script to import assets into UE project is included. Use the corresponding UE plugin to run it.
+
+![](img/photo_1.png?raw=true "parially textured Death Star")
+
+![](img/photo_2.png?raw=true "untextured Bespin")
+
 # FrostyToolsuite
 The most advanced modding platform for games running on DICE's Frostbite game engine.
 
