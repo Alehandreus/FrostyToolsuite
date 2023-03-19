@@ -17,6 +17,19 @@ using FrostySdk.Ebx;
 using FrostySdk.IO;
 using LevelEditorPlugin.Data;
 using MeshVariationDatabase = LevelEditorPlugin.Assets.MeshVariationDatabase;
+using System.Diagnostics;
+using FrostySdk.Managers.Entries;
+using MeshSetPlugin;
+using Frosty.Core.Windows;
+using Bookmarks = Frosty.Core.Bookmarks;
+using LevelEditorPlugin.Properties;
+using SharpDX.Direct3D11;
+using MeshSetPlugin.Resources;
+using System.Windows.Media.Media3D;
+using TexturePlugin;
+using LevelEditorPlugin.Assets;
+using LevelEditorPlugin.ExportData;
+using System.Text.Json;
 
 namespace LevelEditorPlugin.Entities
 {
@@ -129,7 +142,7 @@ namespace LevelEditorPlugin.Entities
             LoadedAssetManager.Instance.UnloadAsset(blueprint);
             entity.Destroy();
         }
-    }
+    }    
 
     [EntityBinding(DataType = typeof(FrostySdk.Ebx.StaticModelGroupEntityData))]
     public class StaticModelGroupEntity : Entity, IEntityData<FrostySdk.Ebx.StaticModelGroupEntityData>, ISpatialReferenceEntity, ILayerEntity
@@ -144,15 +157,105 @@ namespace LevelEditorPlugin.Entities
         {
             physicsData = GetPhysicsData(inData);
 
+            // All export happens here
+
+            string export_path = LevelEditorPlugin.Editors.LevelEditor.export_path;
+
             int instCount = 0;
             int totalInstCount = 0;
 
+            StreamWriter matsw = File.AppendText(export_path + "materials.json");
+            StreamWriter inssw = File.AppendText(export_path + "instances.json");
+
             foreach (StaticModelGroupMemberData member in inData.MemberDatas)
             {
+                EbxAssetEntry entryb = App.AssetManager.GetEbxEntry(member.MemberType.External.FileGuid);
+                EbxAsset assetb = App.AssetManager.GetEbx(entryb);
+                dynamic meshAssetb = (dynamic)assetb.RootObject;                
+
+                EbxAssetEntry entry = App.AssetManager.GetEbxEntry(meshAssetb.Object.Internal.Mesh.External.FileGuid);
+                EbxAsset asset = App.AssetManager.GetEbx(entry);
+                dynamic meshAsset = (dynamic)asset.RootObject;
+
+                string meshpath = export_path + "Assets/" + entry.Path + "/" + entry.Filename + ".fbx";
+                System.IO.Directory.CreateDirectory(export_path + "Assets/" + entry.Path + "/");
+
+                ulong resRid = meshAsset.MeshSetResource;
+                ResAssetEntry rEntry = App.AssetManager.GetResEntry(resRid);
+                MeshSetPlugin.Resources.MeshSet meshSet = App.AssetManager.GetResAs<MeshSetPlugin.Resources.MeshSet>(rEntry);
+                string skeleton = "";
+                FBXExporter exporter = new FBXExporter();
+                exporter.ExportFBX((dynamic)asset.RootObject, meshpath, "2022", "1", false, true, skeleton, "fbx", meshSet);
+
+                PointerRef pr = new PointerRef();
+                MeshMaterialCollection mmc = new MeshMaterialCollection(asset, pr);
+
+                IEnumerator<Frosty.Core.Viewport.MeshMaterial> enumerator = mmc.GetEnumerator();
+
+                MeshExportData mesh_export_data = new MeshExportData(entry.Path, entry.Filename);
+
+                int iii = 0;
+                while (enumerator.MoveNext())
+                {
+                    Frosty.Core.Viewport.MeshMaterial material = enumerator.Current;
+
+                    EbxAssetEntry shader = App.AssetManager.GetEbxEntry(material.Shader.External.FileGuid);
+                    if (shader == null)
+                    {
+                        continue;
+                    }
+
+                    if (iii >= meshSet.Lods[0].Sections.Count || meshSet.Lods[0].Sections[iii].Name == "")
+                    {
+                        continue;
+                    }
+
+                    Section section = new Section(meshSet.Lods[0].Sections[iii++].Name, shader.Name);            
+
+                    MaterialExportData material_export_data = new MaterialExportData(shader.Path, shader.Filename);
+
+                    foreach (dynamic textureParameter in material.TextureParameters)
+                    {
+                        EbxAssetEntry tentry = App.AssetManager.GetEbxEntry(textureParameter.Value.External.FileGuid);
+                        if (tentry == null)
+                        {
+                            break;
+                        }
+                        EbxAsset tasset = App.AssetManager.GetEbx(tentry);
+
+                        string tpath = export_path + "Assets/" + tentry.Name + ".png";
+                        System.IO.Directory.CreateDirectory(export_path + "Assets/" + tentry.Path + "/");
+
+                        ulong tresRid = ((dynamic)tasset.RootObject).Resource;
+                        FrostySdk.Resources.Texture texture = App.AssetManager.GetResAs<FrostySdk.Resources.Texture>(App.AssetManager.GetResEntry(tresRid));
+
+                        TextureExporter texporter = new TextureExporter();
+                        texporter.Export(texture, tpath, "*.png");
+
+                        material_export_data.texture_parameters.Add(textureParameter.ParameterName);
+
+                        section.texture_parameters.Add(new TextureParameter(textureParameter.ParameterName, tentry.Path, tentry.Filename));
+                    }
+
+                    foreach (dynamic vectorParameter in material.VectorParameters)
+                    {
+                        dynamic val = vectorParameter.Value;
+                        section.vector_parameters.Add(new VectorParameter(vectorParameter.ParameterName, val.x, val.y, val.z, val.w));
+
+                        material_export_data.vector_parameters.Add(vectorParameter.ParameterName);
+                    }
+
+                    mesh_export_data.sections.Add(section);
+
+                    string matjson = JsonSerializer.Serialize(material_export_data);
+                    matsw.Write(matjson);
+                    matsw.Write(",");
+                }
+
                 for (int i = 0; i < member.InstanceCount; i++)
                 {
                     StaticModelGroupElementEntityData entityData = new StaticModelGroupElementEntityData();
-                    entityData.InternalBlueprint = member.MemberType;
+                    entityData.InternalBlueprint = member.MemberType;       
 
                     if (member.InstanceTransforms.Count > 0 || physicsData != null)
                     {
@@ -166,11 +269,59 @@ namespace LevelEditorPlugin.Entities
                         {
                             uint index = (uint)(member.PhysicsPartRange.First + i);
 
-                            entityData.Transform = MakeLinearTransform(physicsData.GetTransform(instCount++));
+                            entityData.Transform = MakeLinearTransform(physicsData.GetTransform(instCount++));                       
                             entityData.Index = instCount - 1;
                             entityData.IsHavok = true;
                             entityData.HavokShapeType = physicsData.GetPhysicsShapeType(instCount - 1);
                         }
+
+                        FrostySdk.Ebx.LinearTransform obj = entityData.Transform;
+                        float tx, ty, tz, rx, ry, rz, sx, sy, sz;
+                        if (obj.Rotation.x >= float.MaxValue)
+                        {
+                            // first time convert from raw matrix values
+
+                            Matrix matrix = new Matrix(
+                                    obj.right.x, obj.right.y, obj.right.z, 0.0f,
+                                    obj.up.x, obj.up.y, obj.up.z, 0.0f,
+                                    obj.forward.x, obj.forward.y, obj.forward.z, 0.0f,
+                                    obj.trans.x, obj.trans.y, obj.trans.z, 1.0f
+                                    );
+
+
+                            matrix.Decompose(out Vector3 scale, out SharpDX.Quaternion rotation, out Vector3 translation);
+                            Vector3 euler = SharpDXUtils.ExtractEulerAngles(matrix);
+
+                            tx = translation.X;
+                            ty = translation.Y;
+                            tz = translation.Z;
+
+                            sx = scale.X;
+                            sy = scale.Y;
+                            sz = scale.Z;
+
+                            rx = -euler.Y;
+                            ry = euler.X;
+                            rz = euler.Z;
+                        }
+                        else
+                        {
+                            // grab values directly
+
+                            tx = obj.Translate.x;
+                            ty = obj.Translate.y;
+                            tz = obj.Translate.z;
+
+                            rx = obj.Rotation.x;
+                            ry = obj.Rotation.y;
+                            rz = obj.Rotation.z;
+
+                            sx = obj.Scale.x;
+                            sy = obj.Scale.y;
+                            sz = obj.Scale.z;
+                        }
+
+                        mesh_export_data.instances.Add(new Transform(tx, tz, ty, ry, rz, rx, sx, sy, sz));
 
                         if (i < member.InstanceObjectVariation.Count)
                         {
@@ -197,9 +348,16 @@ namespace LevelEditorPlugin.Entities
                         totalInstCount++;
                     }
 
-                    entities.Add(CreateEntity(entityData));
+                    entities.Add(CreateEntity(entityData));                    
                 }
+
+                string insjson = JsonSerializer.Serialize(mesh_export_data);
+                inssw.Write(insjson);
+                inssw.Write(",");                
             }
+
+            matsw.Close();
+            inssw.Close();
         }
 
         public virtual Matrix GetTransform()

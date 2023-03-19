@@ -131,6 +131,8 @@ namespace LevelEditorPlugin.Editors
 
         private FrostyViewport viewport;
 
+        public static string export_path = "C:/";
+
         //static LevelEditor()
         //{
         //    DefaultStyleKeyProperty.OverrideMetadata(typeof(LevelEditor), new FrameworkPropertyMetadata(typeof(LevelEditor)));
@@ -232,6 +234,11 @@ namespace LevelEditorPlugin.Editors
             // first time loading stuff goes here
             FrostyTaskWindow.Show($"Loading {Path.GetFileName(AssetEntry.Name)}", "", (task) =>
             {
+                File.WriteAllText(export_path + "materials.json", "[");
+                File.WriteAllText(export_path + "instances.json", "[");
+
+                Frosty.Core.Viewport.MeshVariationDb.LoadVariations(task);
+
                 currentLoadingState = new LoadingStateInfo()
                 {
                     Task = task,
@@ -252,6 +259,9 @@ namespace LevelEditorPlugin.Editors
                 currentLoadingState = null;
 
                 world.Initialize();
+
+                File.AppendAllText(export_path + "materials.json", "]");
+                File.AppendAllText(export_path + "instances.json", "]");
             });
 
             timer.Stop();
